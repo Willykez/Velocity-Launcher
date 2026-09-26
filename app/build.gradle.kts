@@ -29,14 +29,18 @@ android {
   }
 
   buildTypes {
-    release {
-      isCrunchPngs = false
-      isMinifyEnabled = false
-      proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-      signingConfig = signingConfigs.getByName("release")
-    }
-    debug { }
+  release {
+    isCrunchPngs = false
+    isMinifyEnabled = true          // R8: code shrink, optimize, obfuscate
+    isShrinkResources = true        // strip unused resources (requires minify)
+    proguardFiles(
+      getDefaultProguardFile("proguard-android-optimize.txt"),
+      "proguard-rules.pro"
+    )
+    signingConfig = signingConfigs.getByName("release")
   }
+  debug { }
+}
 
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_11
