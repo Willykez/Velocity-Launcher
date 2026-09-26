@@ -59,8 +59,8 @@ jobs:
           retention-days: 14
 
   # ---------------------------------------------------------------------------
-  # Job 2: tests + signed release APK. Runs on tag pushes (v*) and manual
-  # dispatch only — secrets are not exposed to pull_request events.
+  # Job 2: tests + signed, minified release APK. Runs on tag pushes (v*) and
+  # manual dispatch only — secrets are not exposed to pull_request events.
   # ---------------------------------------------------------------------------
   release:
     name: Test and build release APK
@@ -105,17 +105,39 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: ./gradlew :app:assembleRelease --no-daemon --stacktrace
 
-      - name: Verify release outputs
+      - name: Verify release APK exists
         shell: bash
         run: |
           set -euo pipefail
           test -n "$(find app/build/outputs/apk/release -name '*.apk' -print -quit)"
+
+      # R8 is enabled via isMinifyEnabled = true + isShrinkResources = true in
+      # app/build.gradle.kts. These outputs must exist for every release build.
+      - name: Verify R8 outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f app/build/outputs/mapping/release/mapping.txt
+          test -f app/build/outputs/mapping/release/seeds.txt
+          test -f app/build/outputs/mapping/release/usage.txt
+          echo "R8 mapping, seeds and usage reports present."
 
       - name: Upload release APK
         uses: actions/upload-artifact@v4
         with:
           name: Velocity-Launcher-release-${{ github.ref_name }}
           path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload R8 mapping and shrink reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: Velocity-Launcher-r8-${{ github.ref_name }}
+          path: |
+            app/build/outputs/mapping/release/mapping.txt
+            app/build/outputs/mapping/release/seeds.txt
+            app/build/outputs/mapping/release/usage.txt
           if-no-files-found: error
           retention-days: 90
 
