@@ -7,6 +7,7 @@ data class LauncherSettings(
     val iconSizeDp: Int = 54,
     val showLabels: Boolean = true,
     val iconShape: IconShape = IconShape.SQUIRCLE,
+    val iconPackPackage: String? = null, // null/blank = use each app's own launcher icon
     val themeMode: String = "AMOLED", // AMOLED, DARK, LIGHT, NEON, PASTEL
     val wallpaperStyle: String = "AURA_GRADIENT", // SYSTEM, AURA_GRADIENT, COSMIC_DARK, SUNSET, MINIMAL_BLACK
     val drawerLayout: String = "CATEGORIZED", // CATEGORIZED, DETAILED_LIST, COMPACT

@@ -4,6 +4,7 @@ import com.example.model.GestureAction
 import com.example.model.IconShape
 import com.example.model.LauncherSettings
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import org.json.JSONArray
 import org.json.JSONObject
@@ -25,6 +26,7 @@ class LauncherRepository(private val dao: LauncherDao) {
                 iconSizeDp = entity.iconSizeDp,
                 showLabels = entity.showLabels,
                 iconShape = runCatching { IconShape.valueOf(entity.iconShape) }.getOrDefault(IconShape.SQUIRCLE),
+                iconPackPackage = entity.iconPackPackage,
                 themeMode = entity.themeMode,
                 wallpaperStyle = entity.wallpaperStyle,
                 drawerLayout = entity.drawerLayout,
@@ -56,6 +58,7 @@ class LauncherRepository(private val dao: LauncherDao) {
                 iconSizeDp = settings.iconSizeDp,
                 showLabels = settings.showLabels,
                 iconShape = settings.iconShape.name,
+                iconPackPackage = settings.iconPackPackage,
                 themeMode = settings.themeMode,
                 wallpaperStyle = settings.wallpaperStyle,
                 drawerLayout = settings.drawerLayout,
@@ -129,9 +132,15 @@ class LauncherRepository(private val dao: LauncherDao) {
         dao.clearAllItems()
     }
 
-    suspend fun exportLayoutJson(currentItems: List<LauncherItemEntity>, currentFolders: List<FolderEntity>, settings: LauncherSettings): String {
+    suspend fun exportLayoutJson(
+        currentItems: List<LauncherItemEntity>,
+        currentFolders: List<FolderEntity>,
+        settings: LauncherSettings,
+        currentOverrides: List<AppOverrideEntity> = emptyList()
+    ): String {
         val root = JSONObject()
-        root.put("version", 2)
+        // Bumped to 3: adds folders + app-override restore, drops the PIN from the payload.
+        root.put("version", 3)
         root.put("timestamp", System.currentTimeMillis())
 
         val settingsObj = JSONObject().apply {
@@ -141,6 +150,7 @@ class LauncherRepository(private val dao: LauncherDao) {
             put("iconSizeDp", settings.iconSizeDp)
             put("showLabels", settings.showLabels)
             put("iconShape", settings.iconShape.name)
+            put("iconPackPackage", settings.iconPackPackage ?: "")
             put("themeMode", settings.themeMode)
             put("wallpaperStyle", settings.wallpaperStyle)
             put("drawerLayout", settings.drawerLayout)
@@ -185,11 +195,39 @@ class LauncherRepository(private val dao: LauncherDao) {
         }
         root.put("folders", foldersArray)
 
+        val overridesArray = JSONArray()
+        currentOverrides.forEach { ov ->
+            val obj = JSONObject().apply {
+                put("packageName", ov.packageName)
+                put("customLabel", ov.customLabel ?: "")
+                put("isFavorite", ov.isFavorite)
+                put("isHidden", ov.isHidden)
+                put("customCategory", ov.customCategory ?: "")
+            }
+            overridesArray.put(obj)
+        }
+        root.put("appOverrides", overridesArray)
+
         return root.toString(2)
     }
 
+    /**
+     * Restores a layout previously produced by [exportLayoutJson].
+     *
+     * Folders and per-app overrides (favorites, hidden apps, custom labels) are fully
+     * restored, matching the "shareable JSON, not proprietary blob" promise. The Hidden
+     * Apps vault PIN is deliberately never part of the backup file (so a shared backup
+     * can't leak it) - the device's current PIN is preserved across an import rather
+     * than being reset to blank.
+     */
     suspend fun importLayoutJson(jsonString: String) {
         val root = JSONObject(jsonString)
+
+        // Preserve the PIN currently configured on this device - it is intentionally
+        // absent from the backup payload, so importing a layout must not silently
+        // disable the Hidden Apps vault.
+        val existingPin = dao.getSettings().first()?.appLockPin ?: ""
+
         if (root.has("settings")) {
             val s = root.getJSONObject("settings")
             val newSettings = LauncherSettings(
@@ -199,6 +237,7 @@ class LauncherRepository(private val dao: LauncherDao) {
                 iconSizeDp = s.optInt("iconSizeDp", 54),
                 showLabels = s.optBoolean("showLabels", true),
                 iconShape = runCatching { IconShape.valueOf(s.optString("iconShape", "SQUIRCLE")) }.getOrDefault(IconShape.SQUIRCLE),
+                iconPackPackage = s.optString("iconPackPackage", "").takeIf { it.isNotBlank() },
                 themeMode = s.optString("themeMode", "AMOLED"),
                 wallpaperStyle = s.optString("wallpaperStyle", "AURA_GRADIENT"),
                 drawerLayout = s.optString("drawerLayout", "CATEGORIZED"),
@@ -208,18 +247,49 @@ class LauncherRepository(private val dao: LauncherDao) {
                 iconLabelSize = s.optString("iconLabelSize", "MEDIUM"),
                 wallpaperDim = s.optDouble("wallpaperDim", 0.0).toFloat(),
                 focusModeEnabled = s.optBoolean("focusModeEnabled", false),
-                searchEngine = s.optString("searchEngine", "GOOGLE")
+                searchEngine = s.optString("searchEngine", "GOOGLE"),
+                appLockPin = existingPin
             )
             saveSettings(newSettings)
         }
 
-        dao.clearAllItems()
+        // Folders first, so freshly generated folder IDs are known before items
+        // that reference them are inserted.
+        dao.clearAllFolders()
+        val folderIdRemap = mutableMapOf<Long, Long>()
+        if (root.has("folders")) {
+            val arr = root.getJSONArray("folders")
+            val foldersToInsert = mutableListOf<Pair<Long, FolderEntity>>()
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                val exportedId = obj.optLong("id", -1L)
+                foldersToInsert.add(
+                    exportedId to FolderEntity(
+                        id = 0, // let Room assign a fresh id
+                        name = obj.optString("name", "Folder"),
+                        pageIndex = obj.optInt("pageIndex", 0),
+                        cellX = obj.optInt("cellX", 0),
+                        cellY = obj.optInt("cellY", 0)
+                    )
+                )
+            }
+            if (foldersToInsert.isNotEmpty()) {
+                val newIds = dao.insertFolders(foldersToInsert.map { it.second })
+                foldersToInsert.forEachIndexed { index, (exportedId, _) ->
+                    if (exportedId > 0 && index < newIds.size) {
+                        folderIdRemap[exportedId] = newIds[index]
+                    }
+                }
+            }
+        }
 
+        dao.clearAllItems()
         if (root.has("items")) {
             val arr = root.getJSONArray("items")
             val list = mutableListOf<LauncherItemEntity>()
             for (i in 0 until arr.length()) {
                 val obj = arr.getJSONObject(i)
+                val exportedFolderId = obj.optLong("folderId", -1L).takeIf { it > 0 }
                 list.add(
                     LauncherItemEntity(
                         type = obj.optString("type", "APP"),
@@ -229,13 +299,35 @@ class LauncherRepository(private val dao: LauncherDao) {
                         pageIndex = obj.optInt("pageIndex", 0),
                         cellX = obj.optInt("cellX", 0),
                         cellY = obj.optInt("cellY", 0),
-                        folderId = obj.optLong("folderId", -1L).takeIf { it > 0 },
+                        folderId = exportedFolderId?.let { folderIdRemap[it] },
                         folderName = obj.optString("folderName").takeIf { it.isNotBlank() },
                         widgetType = obj.optString("widgetType").takeIf { it.isNotBlank() }
                     )
                 )
             }
             dao.insertItems(list)
+        }
+
+        // App overrides: favorites, hidden apps and custom labels.
+        dao.clearAllOverrides()
+        if (root.has("appOverrides")) {
+            val arr = root.getJSONArray("appOverrides")
+            val list = mutableListOf<AppOverrideEntity>()
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                val pkg = obj.optString("packageName")
+                if (pkg.isBlank()) continue
+                list.add(
+                    AppOverrideEntity(
+                        packageName = pkg,
+                        customLabel = obj.optString("customLabel").takeIf { it.isNotBlank() },
+                        isFavorite = obj.optBoolean("isFavorite", false),
+                        isHidden = obj.optBoolean("isHidden", false),
+                        customCategory = obj.optString("customCategory").takeIf { it.isNotBlank() }
+                    )
+                )
+            }
+            if (list.isNotEmpty()) dao.insertOverrides(list)
         }
     }
 }

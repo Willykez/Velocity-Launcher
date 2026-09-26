@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.provider.Settings
 import androidx.activity.compose.BackHandler
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -92,7 +93,9 @@ fun SettingsScreen(
     val scrollState = rememberScrollState()
     var showResetConfirm by remember { mutableStateOf(false) }
     var showPinDialog by remember { mutableStateOf(false) }
-    var pinText by remember { mutableStateOf(settings.appLockPin) }
+    // Intentionally starts blank rather than prefilled with settings.appLockPin: that
+    // field holds a one-way hash now, not the PIN itself, so there's nothing to show.
+    var pinText by remember { mutableStateOf("") }
 
     BackHandler {
         onClose()
@@ -354,6 +357,14 @@ fun SettingsScreen(
                         )
                     }
 
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+
+                    // Icon pack picker (Nova/ADW/GO-compatible appfilter.xml icon packs)
+                    IconPackPicker(
+                        currentPackage = settings.iconPackPackage,
+                        onSelected = { onSettingsChanged(settings.copy(iconPackPackage = it)) }
+                    )
+
                     // Notification Badges
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -434,10 +445,46 @@ fun SettingsScreen(
                             )
                         }
                         Button(
-                            onClick = { showPinDialog = true },
+                            onClick = {
+                                pinText = ""
+                                showPinDialog = true
+                            },
                             shape = RoundedCornerShape(10.dp)
                         ) {
                             Text(if (settings.appLockPin.isNotBlank()) "Change" else "Set PIN")
+                        }
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+
+                    val isDeviceAdminActive = com.example.engine.AppLoader.isDeviceAdminActive(context)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Real Screen Lock", fontSize = 14.sp)
+                            Text(
+                                if (isDeviceAdminActive)
+                                    "Enabled — the Lock Screen gesture locks your device"
+                                else
+                                    "Off — the Lock Screen gesture opens Recents instead",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                if (isDeviceAdminActive) {
+                                    com.example.engine.AppLoader.revokeDeviceAdmin(context)
+                                } else {
+                                    com.example.engine.AppLoader.requestDeviceAdmin(context)
+                                }
+                            },
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text(if (isDeviceAdminActive) "Disable" else "Enable")
                         }
                     }
                 }
@@ -559,7 +606,9 @@ fun SettingsScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        onSettingsChanged(settings.copy(appLockPin = pinText.trim()))
+                        onSettingsChanged(
+                            settings.copy(appLockPin = com.example.engine.PinUtils.hash(pinText.trim()))
+                        )
                         showPinDialog = false
                     }
                 ) {
@@ -666,6 +715,88 @@ private fun BadgeDropdown(current: String, onSelected: (String) -> Unit) {
                         expanded = false
                     }
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun IconPackPicker(currentPackage: String?, onSelected: (String?) -> Unit) {
+    val context = LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    var expanded by remember { mutableStateOf(false) }
+    var packs by remember { mutableStateOf<List<com.example.engine.IconPackInfo>>(emptyList()) }
+    var loaded by remember { mutableStateOf(false) }
+
+    val currentLabel = if (currentPackage.isNullOrBlank()) {
+        "System Default"
+    } else {
+        packs.firstOrNull { it.packageName == currentPackage }?.label ?: "Custom"
+    }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column {
+            Text("Icon Pack", fontSize = 14.sp)
+            Text(
+                "Uses each app's own icon unless a themed pack is installed",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Box {
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.surface,
+                modifier = Modifier
+                    .clickable {
+                        expanded = true
+                        if (!loaded) {
+                            loaded = true
+                            // Loaded lazily, off the main thread, only when the user
+                            // actually opens the picker - icon pack discovery walks
+                            // every installed app's manifest, which is not free.
+                            scope.launch {
+                                packs = com.example.engine.IconPackManager.getInstalledIconPacks(context)
+                            }
+                        }
+                    }
+                    .padding(4.dp)
+            ) {
+                Text(
+                    currentLabel,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp
+                )
+            }
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                DropdownMenuItem(
+                    text = { Text("System Default") },
+                    onClick = {
+                        onSelected(null)
+                        expanded = false
+                    }
+                )
+                if (loaded && packs.isEmpty()) {
+                    DropdownMenuItem(
+                        text = { Text("No icon packs installed", color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                        onClick = { expanded = false },
+                        enabled = false
+                    )
+                }
+                packs.forEach { pack ->
+                    DropdownMenuItem(
+                        text = { Text(pack.label) },
+                        onClick = {
+                            onSelected(pack.packageName)
+                            expanded = false
+                        }
+                    )
+                }
             }
         }
     }

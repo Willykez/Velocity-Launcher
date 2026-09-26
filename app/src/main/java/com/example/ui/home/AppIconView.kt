@@ -39,6 +39,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.engine.IconManager
 import com.example.model.IconShape
+import androidx.compose.runtime.State
+import androidx.compose.runtime.produceState
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -52,6 +54,8 @@ fun AppIconView(
     badgeMode: String = "DOT", // NONE, DOT, NUMERIC
     monochrome: Boolean = false,
     labelSize: String = "MEDIUM", // SMALL, MEDIUM, LARGE
+    activityName: String? = null,
+    iconPackPackage: String? = null,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
     onLongClick: () -> Unit
@@ -108,15 +112,25 @@ fun AppIconView(
                         modifier = Modifier.size((iconSizeDp * 0.65f).dp)
                     )
                 } else if (!packageName.isNullOrBlank()) {
-                    val iconBitmap: Bitmap = remember(packageName) {
-                        IconManager.getAppIcon(context, packageName)
-                    }
-                    Image(
-                        bitmap = iconBitmap.asImageBitmap(),
-                        contentDescription = label,
-                        colorFilter = if (monochrome) ColorFilter.tint(MaterialTheme.colorScheme.primary) else null,
+                    val iconBitmap by produceIconState(packageName, activityName, iconPackPackage)
+                    androidx.compose.animation.Crossfade(
+                        targetState = iconBitmap,
+                        label = "app_icon_fade",
                         modifier = Modifier.fillMaxSize()
-                    )
+                    ) { bmp ->
+                        if (bmp != null) {
+                            Image(
+                                bitmap = bmp.asImageBitmap(),
+                                contentDescription = label,
+                                colorFilter = if (monochrome) ColorFilter.tint(MaterialTheme.colorScheme.primary) else null,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        } else {
+                            // Placeholder shown only for the brief window before the
+                            // icon is decoded off the main thread for the first time.
+                            Box(modifier = Modifier.fillMaxSize())
+                        }
+                    }
                 } else {
                     Icon(
                         imageVector = Icons.Default.Widgets,
@@ -170,5 +184,29 @@ fun AppIconView(
                 color = MaterialTheme.colorScheme.onBackground
             )
         }
+    }
+}
+
+/**
+ * Loads an app's icon off the main thread. Starts from whatever's already cached
+ * (usually instant after the first load) and only suspends onto Dispatchers.IO when
+ * nothing is cached yet, so scrolling a long app drawer never blocks composition on
+ * PackageManager/bitmap decode work - the exact "off the main thread" priority called
+ * out in the launcher's own design doc.
+ */
+@Composable
+private fun produceIconState(
+    packageName: String,
+    activityName: String?,
+    iconPackPackage: String?
+): State<Bitmap?> {
+    val context = LocalContext.current
+    return produceState<Bitmap?>(
+        initialValue = IconManager.peekCached(packageName, iconPackPackage),
+        key1 = packageName,
+        key2 = activityName,
+        key3 = iconPackPackage
+    ) {
+        value = IconManager.getAppIconAsync(context, packageName, activityName, iconPackPackage)
     }
 }

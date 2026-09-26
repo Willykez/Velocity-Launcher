@@ -163,6 +163,8 @@ fun HomeGrid(
                         AppIconView(
                             label = item.label,
                             packageName = item.packageName,
+                            activityName = item.activityName,
+                            iconPackPackage = settings.iconPackPackage,
                             iconShape = settings.iconShape,
                             iconSizeDp = settings.iconSizeDp,
                             showLabel = settings.showLabels,

@@ -66,6 +66,7 @@ data class LauncherSettingsEntity(
     val iconSizeDp: Int = 54,
     val showLabels: Boolean = true,
     val iconShape: String = "SQUIRCLE",
+    val iconPackPackage: String? = null,
     val themeMode: String = "AMOLED",
     val wallpaperStyle: String = "AURA_GRADIENT",
     val drawerLayout: String = "CATEGORIZED",

@@ -6,6 +6,6 @@ enum class GestureAction(val label: String, val iconName: String) {
     OPEN_NOTIFICATIONS("Expand Notifications", "Notifications"),
     OPEN_SETTINGS("Launcher Settings", "Settings"),
     OPEN_SEARCH("Instant App Search", "Search"),
-    LOCK_SCREEN("Screen Off / Overview", "Lock"),
+    LOCK_SCREEN("Lock Screen", "Lock"),
     TOGGLE_WALLPAPER("Cycle Wallpaper Mode", "Wallpaper")
 }

@@ -1,6 +1,6 @@
 {
   "name": "Aura Launcher",
-  "description": "A high-performance, fluid, and deeply customizable native Android launcher with smart category drawer, gesture mapping, adaptive icon shapes, and backup/restore.",
+  "description": "A high-performance, fluid, and deeply customizable native Android launcher with smart category drawer, gesture mapping, adaptive icon shapes, icon pack support, and full backup/restore.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": []
 }

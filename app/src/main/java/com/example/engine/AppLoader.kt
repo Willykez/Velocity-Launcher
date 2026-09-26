@@ -210,4 +210,67 @@ object AppLoader {
             } catch (_: Exception) {}
         }
     }
+
+    /** True if the user has opted Aura in as an active device administrator. */
+    fun isDeviceAdminActive(context: Context): Boolean {
+        return try {
+            val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as? android.app.admin.DevicePolicyManager
+            val admin = android.content.ComponentName(context, com.example.receiver.AuraDeviceAdminReceiver::class.java)
+            dpm?.isAdminActive(admin) ?: false
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /** Launches the system prompt asking the user to grant Aura device-admin rights. */
+    fun requestDeviceAdmin(context: Context) {
+        try {
+            val admin = android.content.ComponentName(context, com.example.receiver.AuraDeviceAdminReceiver::class.java)
+            val intent = Intent(android.app.admin.DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
+                putExtra(android.app.admin.DevicePolicyManager.EXTRA_DEVICE_ADMIN, admin)
+                putExtra(
+                    android.app.admin.DevicePolicyManager.EXTRA_ADD_EXPLANATION,
+                    "Lets the \"Lock Screen\" gesture actually lock your device. Aura requests no other permission (no wipe, no password policy)."
+                )
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(intent)
+        } catch (_: Exception) {}
+    }
+
+    /** Revokes Aura's device-admin rights (used by the Settings toggle to disable it). */
+    fun revokeDeviceAdmin(context: Context) {
+        try {
+            val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as? android.app.admin.DevicePolicyManager
+            val admin = android.content.ComponentName(context, com.example.receiver.AuraDeviceAdminReceiver::class.java)
+            dpm?.removeActiveAdmin(admin)
+        } catch (_: Exception) {}
+    }
+
+    /**
+     * Real screen lock when Aura has been granted device-admin rights; otherwise falls
+     * back to opening Recents/Overview (best-effort, via the same kind of hidden-API
+     * reflection used by [expandNotificationShade]), and if even that fails, opens the
+     * device-admin grant screen so the user can enable real locking next time.
+     */
+    fun lockScreenOrRecents(context: Context) {
+        if (isDeviceAdminActive(context)) {
+            try {
+                val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as? android.app.admin.DevicePolicyManager
+                dpm?.lockNow()
+                return
+            } catch (_: Exception) {
+                // Fall through to the Recents fallback below.
+            }
+        }
+
+        try {
+            val statusBarService = context.getSystemService("statusbar")
+            val statusBarManager = Class.forName("android.app.StatusBarManager")
+            val toggleRecents = statusBarManager.getMethod("toggleRecentApps")
+            toggleRecents.invoke(statusBarService)
+        } catch (_: Exception) {
+            requestDeviceAdmin(context)
+        }
+    }
 }

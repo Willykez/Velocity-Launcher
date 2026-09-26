@@ -102,6 +102,7 @@ fun AppDrawerSheet(
     var showPinDialog by remember { mutableStateOf(false) }
     var enteredPin by remember { mutableStateOf("") }
     var pinError by remember { mutableStateOf(false) }
+    val drawerContext = LocalContext.current
 
     var drawerDisplayMode by remember { mutableStateOf(settings.drawerLayout) } // "CATEGORIZED", "DETAILED_LIST", "COMPACT"
 
@@ -117,20 +118,34 @@ fun AppDrawerSheet(
         // Filter apps based on search query, category, and hidden state
         val filteredApps by remember(apps, searchQuery, selectedCategory, isVaultUnlocked) {
             derivedStateOf {
-                apps.filter { app ->
-                    val matchesSearch = searchQuery.isBlank() ||
-                            app.displayLabel.contains(searchQuery, ignoreCase = true) ||
-                            app.packageName.contains(searchQuery, ignoreCase = true)
-
+                val query = searchQuery.trim()
+                apps.mapNotNull { app ->
                     val matchesCategory = when (selectedCategory) {
                         AppCategory.ALL -> !app.isHidden
                         AppCategory.FAVORITES -> app.isFavorite && !app.isHidden
                         AppCategory.HIDDEN -> app.isHidden && isVaultUnlocked
                         else -> app.category == selectedCategory && !app.isHidden
                     }
+                    if (!matchesCategory) return@mapNotNull null
 
-                    matchesSearch && matchesCategory
-                }.sortedBy { it.displayLabel.lowercase() }
+                    if (query.isBlank()) return@mapNotNull app to 0
+
+                    // Fuzzy-match the display label; fall back to an exact package-name
+                    // substring for power users searching by package.
+                    val labelScore = com.example.engine.FuzzyMatch.score(query, app.displayLabel)
+                    val score = labelScore
+                        ?: if (app.packageName.contains(query, ignoreCase = true)) 10 else null
+                    score?.let { app to it }
+                }.let { scored ->
+                    if (query.isBlank()) {
+                        scored.map { it.first }.sortedBy { it.displayLabel.lowercase() }
+                    } else {
+                        scored.sortedWith(
+                            compareByDescending<Pair<AppInfo, Int>> { it.second }
+                                .thenBy { it.first.displayLabel.lowercase() }
+                        ).map { it.first }
+                    }
+                }
             }
         }
 
@@ -250,6 +265,8 @@ fun AppDrawerSheet(
                                 AppIconView(
                                     label = app.displayLabel,
                                     packageName = app.packageName,
+                                    activityName = app.activityName,
+                                    iconPackPackage = settings.iconPackPackage,
                                     iconShape = settings.iconShape,
                                     iconSizeDp = 46,
                                     showLabel = true,
@@ -365,6 +382,8 @@ fun AppDrawerSheet(
                                     AppIconView(
                                         label = app.displayLabel,
                                         packageName = app.packageName,
+                                        activityName = app.activityName,
+                                        iconPackPackage = settings.iconPackPackage,
                                         iconShape = settings.iconShape,
                                         iconSizeDp = if (drawerDisplayMode == "COMPACT") settings.iconSizeDp - 6 else settings.iconSizeDp,
                                         showLabel = settings.showLabels,
@@ -437,11 +456,12 @@ fun AppDrawerSheet(
             confirmButton = {
                 Button(
                     onClick = {
-                        if (enteredPin == settings.appLockPin || settings.appLockPin.isEmpty()) {
+                        if (com.example.engine.PinUtils.matches(enteredPin, settings.appLockPin)) {
                             isVaultUnlocked = true
                             showPinDialog = false
                             onCategoryChange(AppCategory.HIDDEN)
                         } else {
+                            com.example.engine.HapticUtils.error(drawerContext)
                             pinError = true
                         }
                     }
@@ -466,8 +486,12 @@ private fun DetailedAppRow(
     onLongClick: () -> Unit
 ) {
     val context = LocalContext.current
-    val iconBitmap = remember(app.packageName) {
-        IconManager.getAppIcon(context, app.packageName)
+    val iconBitmap by androidx.compose.runtime.produceState<android.graphics.Bitmap?>(
+        initialValue = IconManager.peekCached(app.packageName, settings.iconPackPackage),
+        key1 = app.packageName,
+        key2 = settings.iconPackPackage
+    ) {
+        value = IconManager.getAppIconAsync(context, app.packageName, app.activityName, settings.iconPackPackage)
     }
 
     Row(
@@ -485,12 +509,14 @@ private fun DetailedAppRow(
                 .background(MaterialTheme.colorScheme.surfaceVariant),
             contentAlignment = Alignment.Center
         ) {
-            Image(
-                bitmap = iconBitmap.asImageBitmap(),
-                contentDescription = app.displayLabel,
-                colorFilter = if (settings.monochromeIcons) ColorFilter.tint(MaterialTheme.colorScheme.primary) else null,
-                modifier = Modifier.fillMaxSize()
-            )
+            if (iconBitmap != null) {
+                Image(
+                    bitmap = iconBitmap!!.asImageBitmap(),
+                    contentDescription = app.displayLabel,
+                    colorFilter = if (settings.monochromeIcons) ColorFilter.tint(MaterialTheme.colorScheme.primary) else null,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
         }
 
         Spacer(modifier = Modifier.width(14.dp))

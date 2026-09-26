@@ -4,7 +4,9 @@ import android.content.Context
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import com.example.engine.HapticUtils
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -114,8 +116,10 @@ fun HomeScreen(
                     },
                     onDragEnd = {
                         if (totalDragY < -60f) {
+                            HapticUtils.tick(context)
                             viewModel.executeGesture(settings.swipeUpGesture, context)
                         } else if (totalDragY > 60f) {
+                            HapticUtils.tick(context)
                             viewModel.executeGesture(settings.swipeDownGesture, context)
                         }
                         totalDragY = 0f
@@ -123,11 +127,29 @@ fun HomeScreen(
                 )
             }
             .pointerInput(Unit) {
+                // Pinch gesture: settings.pinchGesture was configurable but never
+                // actually detected anywhere - this is what fires it. Fires once per
+                // pinch past a threshold, not continuously, so it behaves like the
+                // other one-shot gestures rather than repeating mid-gesture.
+                var cumulativeZoom = 1f
+                var fired = false
+                detectTransformGestures { _, _, zoom, _ ->
+                    cumulativeZoom *= zoom
+                    if (!fired && kotlin.math.abs(cumulativeZoom - 1f) > 0.22f) {
+                        fired = true
+                        HapticUtils.tick(context)
+                        viewModel.executeGesture(settings.pinchGesture, context)
+                    }
+                }
+            }
+            .pointerInput(Unit) {
                 detectTapGestures(
                     onDoubleTap = {
+                        HapticUtils.tick(context)
                         viewModel.executeGesture(settings.doubleTapGesture, context)
                     },
                     onLongPress = {
+                        HapticUtils.tick(context)
                         showQuickOptionsModal = true
                     }
                 )

@@ -14,7 +14,7 @@ import androidx.room.RoomDatabase
         AppUsageEntity::class,
         QuickNoteEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class LauncherDatabase : RoomDatabase() {

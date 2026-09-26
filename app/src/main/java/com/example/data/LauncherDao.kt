@@ -42,14 +42,26 @@ interface LauncherDao {
     @Query("DELETE FROM folders WHERE id = :id")
     suspend fun deleteFolder(id: Long)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertFolders(folders: List<FolderEntity>): List<Long>
+
+    @Query("DELETE FROM folders")
+    suspend fun clearAllFolders()
+
     @Query("SELECT * FROM app_overrides")
     fun getAllOverrides(): Flow<List<AppOverrideEntity>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertOverride(override: AppOverrideEntity)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertOverrides(overrides: List<AppOverrideEntity>)
+
     @Query("DELETE FROM app_overrides WHERE packageName = :packageName")
     suspend fun deleteOverride(packageName: String)
+
+    @Query("DELETE FROM app_overrides")
+    suspend fun clearAllOverrides()
 
     @Query("SELECT * FROM launcher_settings WHERE id = 1 LIMIT 1")
     fun getSettings(): Flow<LauncherSettingsEntity?>

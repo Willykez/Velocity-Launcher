@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<device-admin xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-policies>
+        <!-- The only capability Aura Launcher needs is the ability to lock the
+             screen on demand (the "Lock Screen" gesture action). It requests
+             nothing else - no wipe, no password policy, no encryption control. -->
+        <force-lock />
+    </uses-policies>
+</device-admin>

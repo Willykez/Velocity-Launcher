@@ -54,6 +54,8 @@ fun DockView(
                 AppIconView(
                     label = item.label,
                     packageName = item.packageName,
+                    activityName = item.activityName,
+                    iconPackPackage = settings.iconPackPackage,
                     iconShape = settings.iconShape,
                     iconSizeDp = (settings.iconSizeDp - 2).coerceAtLeast(42),
                     showLabel = false,

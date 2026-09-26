@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -121,25 +122,38 @@ class LauncherViewModel(
     private val _renameTarget = MutableStateFlow<AppInfo?>(null)
     val renameTarget: StateFlow<AppInfo?> = _renameTarget.asStateFlow()
 
+    // Guards setupDefaultLayout() so it can only ever run once per process, no matter
+    // how many times refreshInstalledApps() is called (e.g. every onResume()). Without
+    // this, each refresh spawned a brand new collector on homeItems below, and every
+    // one of those leaked collectors would independently re-seed the default layout,
+    // silently duplicating home-screen icons and dock apps over time.
+    private var defaultLayoutCheckStarted = false
+
     init {
         refreshInstalledApps()
-        checkDefaultLayout()
+        checkDefaultLayoutOnce()
     }
 
     fun refreshInstalledApps() {
         viewModelScope.launch {
             val apps = AppLoader.loadInstalledApps(appContext)
             _rawInstalledApps.value = apps
-            checkDefaultLayout()
+            checkDefaultLayoutOnce()
         }
     }
 
-    private fun checkDefaultLayout() {
+    private fun checkDefaultLayoutOnce() {
+        if (defaultLayoutCheckStarted) return
+        defaultLayoutCheckStarted = true
         viewModelScope.launch {
-            homeItems.collect { items ->
-                if (items.isEmpty() && _rawInstalledApps.value.isNotEmpty()) {
-                    setupDefaultLayout(_rawInstalledApps.value)
-                }
+            // Only the first (current) value of the flow matters here: we just need
+            // to know whether the DB already has a layout before apps finished loading.
+            val items = homeItems.value.ifEmpty { repository.allItems.first() }
+            val apps = _rawInstalledApps.value.ifEmpty {
+                AppLoader.loadInstalledApps(appContext).also { _rawInstalledApps.value = it }
+            }
+            if (items.isEmpty() && apps.isNotEmpty()) {
+                setupDefaultLayout(apps)
             }
         }
     }
@@ -414,13 +428,13 @@ class LauncherViewModel(
                 val next = styles[(curIdx + 1) % styles.size]
                 updateSettings(settings.value.copy(wallpaperStyle = next))
             }
-            GestureAction.LOCK_SCREEN -> {}
+            GestureAction.LOCK_SCREEN -> AppLoader.lockScreenOrRecents(context)
             GestureAction.NONE -> {}
         }
     }
 
     suspend fun exportJson(): String {
-        return repository.exportLayoutJson(homeItems.value, folders.value, settings.value)
+        return repository.exportLayoutJson(homeItems.value, folders.value, settings.value, overrides.value)
     }
 
     fun importJson(json: String, onComplete: (Boolean) -> Unit) {
